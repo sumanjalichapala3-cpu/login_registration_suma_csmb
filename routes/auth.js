@@ -1,84 +1,102 @@
-const router = require('express').Router();
-const User = require('../models/User');
+const express = require('express');
 const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const router = express.Router();
+const User = require('../models/User');
 
-// REGISTER
+
 router.post('/register', async (req, res) => {
   try {
-    const emailExists = await User.findOne({ email: req.body.email });
-    if (emailExists) return res.status(400).json({ message: "Email already registered" });
+    const { confirmPassword, ...userData } = req.body;
 
-    const salt = await bcrypt.genSalt(10);
-    const hashedPassword = await bcrypt.hash(req.body.password, salt);
+    if (!userData.password || userData.password !== confirmPassword) {
+      return res.status(400).json({ message: 'Passwords do not match' });
+    }
 
-    const newUser = new User({
-      firstName: req.body.firstName,
-      lastName: req.body.lastName,
-      email: req.body.email,
-      password: hashedPassword,
-      age: req.body.age,
-      gender: req.body.gender,
-      phone: req.body.phone,
-      city: req.body.city,       
-      country: req.body.country,   
-      dob: req.body.dob
-    });
+    const existingUser = await User.findOne({ email: userData.email });
+    if (existingUser) {
+      return res.status(400).json({ message: 'Email already registered' });
+    }
 
+    const hashedPassword = await bcrypt.hash(userData.password, 10);
+    const newUser = new User({ ...userData, password: hashedPassword });
     await newUser.save();
-    res.status(201).json({ message: "User registered successfully!" });
+
+    res.status(201).json({ message: 'Registered successfully' });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: "Server error during registration" });
+    res.status(500).json({ message: err.message });
   }
 });
 
-// LOGIN
+
 router.post('/login', async (req, res) => {
   try {
-    const user = await User.findOne({ email: req.body.email });
-    if (!user) return res.status(400).json({ message: "Invalid Email or Password" });
+    const { email, password } = req.body;
 
-    const validPassword = await bcrypt.compare(req.body.password, user.password);
-    if (!validPassword) return res.status(400).json({ message: "Invalid Email or Password" });
+    if (!email || !password) {
+      return res.status(400).json({ message: 'Email and password are required' });
+    }
 
-    res.status(200).json({ message: "Logged in successfully", userId: user._id });
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(401).json({ message: 'Invalid email or password' });
+    }
+
+    const isPasswordValid = await bcrypt.compare(password, user.password);
+    if (!isPasswordValid) {
+      return res.status(401).json({ message: 'Invalid email or password' });
+    }
+
+    const token = jwt.sign(
+      { id: user._id, email: user.email },
+      process.env.JWT_SECRET || 'secret123',
+      { expiresIn: '1h' }
+    );
+
+    res.status(200).json({ message: 'Login successful', token });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: "Server error during login" });
+    res.status(500).json({ message: err.message });
   }
 });
 
-// GET ALL MEMBERS
-router.get('/members', async (req, res) => {
+
+router.get('/users', async (req, res) => {
   try {
-    const users = await User.find().select('-password'); 
+    const users = await User.find().select('-password');
     res.status(200).json(users);
   } catch (err) {
-    res.status(500).json({ message: "Failed to retrieve dashboard data" });
+    res.status(500).json({ message: err.message });
   }
 });
 
-// UPDATE MEMBER
-router.put('/update/:id', async (req, res) => {
+
+router.put('/users/:id', async (req, res) => {
   try {
-    const updatedUser = await User.findByIdAndUpdate(
-      req.params.id,
-      { $set: req.body },
-      { new: true }
-    ).select('-password');
-    res.status(200).json({ message: "Profile updated successfully", user: updatedUser });
+    if (req.body.dob) {
+      const birthDate = new Date(req.body.dob);
+      const today = new Date();
+      let calculatedAge = today.getFullYear() - birthDate.getFullYear();
+      const monthDiff = today.getMonth() - birthDate.getMonth();
+      if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDate.getDate())) {
+        calculatedAge--;
+      }
+      req.body.age = calculatedAge >= 0 ? calculatedAge : 0;
+    }
+
+    const updatedUser = await User.findByIdAndUpdate(req.params.id, req.body, { new: true }).select('-password');
+    res.status(200).json(updatedUser);
   } catch (err) {
-    res.status(500).json({ message: "Failed to update profile details" });
+    res.status(500).json({ message: err.message });
   }
 });
 
-// DELETE MEMBER
-router.delete('/delete/:id', async (req, res) => {
+
+router.delete('/users/:id', async (req, res) => {
   try {
     await User.findByIdAndDelete(req.params.id);
-    res.status(200).json({ message: "Profile deleted successfully" });
+    res.status(200).json({ message: 'Deleted successfully' });
   } catch (err) {
-    res.status(500).json({ message: "Failed to delete user profile" });
+    res.status(500).json({ message: err.message });
   }
 });
 
